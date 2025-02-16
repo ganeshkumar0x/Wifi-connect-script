@@ -1,0 +1,34 @@
+#!/bin/ksh
+
+output_file="/etc/hostname.iwx0"
+
+networks=$(ifconfig iwx0 scan | awk '/nwid/ {sub(/.*nwid /, ""); sub(/ chan.*$/, ""); gsub(/"/, ""); if ($0 != "") print}' | sort -u)
+
+[ -z "$networks" ] && { printf "No networks found.\n"; exit 1; }
+
+printf "Available networks:\n"
+printf "%s\n" "$networks" | nl -v 1
+
+while :; do
+    printf "Select a network (enter the number): "
+    read selection
+    selected_network=$(printf "%s\n" "$networks" | awk -v sel="$selection" 'NR == sel')
+    [ -n "$selected_network" ] && break || printf "Invalid selection. Please try again.\n"
+done
+
+printf "Enter the WPA key for '%s': " "$selected_network"
+read -r wpa_key
+
+[ -f "$output_file" ] && doas cp "$output_file" "$output_file.bak" 2>/dev/null || \
+    { printf "Failed to backup %s. Exiting.\n" "$output_file"; exit 1; }
+
+doas sh -c "{
+    printf 'join \"%s\" wpakey \"%s\"\ndhcp\ninet6 autoconf\nup\n' '$selected_network' '$wpa_key'
+} > '$output_file'" || {
+    printf "Failed to write to %s. Restoring backup.\n" "$output_file"
+    [ -f "$output_file.bak" ] && doas cp "$output_file.bak" "$output_file"
+    exit 1
+}
+
+doas sh /etc/netstart iwx0 && printf "Network configured successfully.\n" || \
+    { printf "Failed to restart network interface. Check configuration.\n"; exit 1; }
